@@ -27,7 +27,7 @@ width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 # Create video writer for output
-output_path = "media/output_helmet_lpr_detection.mp4"
+output_path = "media/test1-detected.mp4"
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
@@ -43,6 +43,15 @@ BICYCLE_CLASS = 1     # bicycle in COCO
 
 # Polygon coordinates from user (HTML image map)
 polygon = np.array([[2141,1031], [700,700], [700,5], [15,8], [9,1685], [1810,1691]], np.int32)
+polygon_motorcycle = np.array([
+    [8, 647],
+    [3, 1301],
+    [1814, 1299],
+    [700, 700],
+    [700, 390]
+])
+
+polygon_motorcycle = polygon_motorcycle.reshape((-1, 1, 2))
 polygon = polygon.reshape((-1, 1, 2))
 
 print(f"Processing video: {video_path}")
@@ -128,7 +137,7 @@ while True:
                 cx, cy = x1 + (x2 - x1) // 2, y1 + (y2 - y1) // 2
                 
                 # Check if center is inside polygon
-                if cv2.pointPolygonTest(polygon, (cx, cy), False) >= 0:
+                if cv2.pointPolygonTest(polygon_motorcycle, (cx, cy), False) >= 0:
                     if cls == MOTORCYCLE_CLASS:
                         motorcycles_detected.append((x1, y1, x2, y2, conf))
                         total_motorcycles_detected += 1
@@ -157,43 +166,99 @@ while True:
                         cvzone.putTextRect(img, f'Bicycle {conf}', (max(0, x1), max(35, y1)), scale=0.8, thickness=1)
                         
     
-    # Detect helmets using the custom helmet model
-    helmet_results = helmet_model(img, stream=True, conf=0.45) 
+    # Detect helmets only for detected motorcycles
     helmet_detections_found = 0
-    for r in helmet_results:
-        boxes = r.boxes
-        if boxes is not None:
-            for box in boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cx, cy = x1 + (x2 - x1) // 2, y1 + (y2 - y1) // 2
-                conf = round(box.conf[0].item(), 2)
-                cls = int(box.cls[0])
-                
-                # Check if center is inside polygon
-                if cv2.pointPolygonTest(polygon, (cx, cy), False) >= 0:
-                    if cls == 0:  # With helmet
-                        total_helmets_detected += 1
+    for motorcycle in motorcycles_detected:
+        mx1, my1, mx2, my2, mconf = motorcycle
+        
+        # Expand motorcycle bounding box slightly to include potential helmet area
+        # Helmets are typically above the motorcycle, so expand upward
+        expansion_factor = 0.3  # 30% expansion
+        width = mx2 - mx1
+        height = my2 - my1
+        
+        # Expand upward more than other directions for helmet detection
+        expanded_x1 = max(0, int(mx1 - width * expansion_factor * 0.5))
+        expanded_y1 = max(0, int(my1 - height * expansion_factor * 1.5))  # More expansion upward
+        expanded_x2 = min(img.shape[1], int(mx2 + width * expansion_factor * 0.5))
+        expanded_y2 = min(img.shape[0], int(my2 + height * expansion_factor * 0.5))
+        
+        # Extract expanded ROI for helmet detection
+        motorcycle_roi = img[expanded_y1:expanded_y2, expanded_x1:expanded_x2]
+        
+        if motorcycle_roi.size > 0:
+            # Detect helmets in the motorcycle ROI
+            helmet_results = helmet_model(motorcycle_roi, stream=True, conf=0.45)
+            
+            for r in helmet_results:
+                boxes = r.boxes
+                if boxes is not None:
+                    for box in boxes:
+                        hx1, hy1, hx2, hy2 = map(int, box.xyxy[0])
+                        conf = round(box.conf[0].item(), 2)
+                        cls = int(box.cls[0])
                         
-                        # Draw green rectangle for with helmet
-                        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cvzone.putTextRect(img, f'With Helmet {conf}', (max(0, x1), max(35, y1)), scale=0.8, thickness=1)
+                        # Convert ROI coordinates back to full image coordinates
+                        full_hx1 = hx1 + expanded_x1
+                        full_hy1 = hy1 + expanded_y1
+                        full_hx2 = hx2 + expanded_x1
+                        full_hy2 = hy2 + expanded_y1
                         
-                        # Debug output for with helmet detections
-                        if frame_count % 60 == 0:  # Print every 60 frames
-                            print(f"  ✅  With helmet detected: confidence {conf}")
+                        # Calculate center of helmet detection
+                        hcx, hcy = full_hx1 + (full_hx2 - full_hx1) // 2, full_hy1 + (full_hy2 - full_hy1) // 2
                         
-                    elif cls == 1:  # Without helmet
-                        total_without_helmets_detected += 1
-                        helmet_detections_found += 1
-                        # Draw red rectangle for without helmet
-                        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        cvzone.putTextRect(img, f'Without Helmet {conf}', (max(0, x1), max(35, y1)), scale=0.8, thickness=1)
+                        # Check if helmet center is inside the general polygon
+                        if cv2.pointPolygonTest(polygon, (hcx, hcy), False) >= 0:
+                            if cls == 0:  # With helmet
+                                total_helmets_detected += 1
+                                
+                                # Draw green rectangle for with helmet
+                                cv2.rectangle(img, (full_hx1, full_hy1), (full_hx2, full_hy2), (0, 255, 0), 2)
+                                cvzone.putTextRect(img, f'With Helmet {conf}', (max(0, full_hx1), max(35, full_hy1)), scale=0.8, thickness=1)
+                                
+                                # Debug output for with helmet detections
+                                if frame_count % 60 == 0:  # Print every 60 frames
+                                    print(f"  ✅  With helmet detected on motorcycle: confidence {conf}")
+                                
+                            elif cls == 1:  # Without helmet
+                                total_without_helmets_detected += 1
+                                helmet_detections_found += 1
+                                # Draw red rectangle for without helmet
+                                cv2.rectangle(img, (full_hx1, full_hy1), (full_hx2, full_hy2), (0, 0, 255), 2)
+                                cvzone.putTextRect(img, f'Without Helmet {conf}', (max(0, full_hx1), max(35, full_hy1)), scale=0.8, thickness=1)
+                                
+                                # Debug output for without helmet detections
+                                if frame_count % 60 == 0:  # Print every 60 frames
+                                    print(f"  🚨  Without helmet detected on motorcycle: confidence {conf}")
+            
+            # Draw expanded ROI rectangle for debugging (optional)
+            if frame_count % 60 == 0:  # Only draw occasionally to avoid clutter
+                cv2.rectangle(img, (expanded_x1, expanded_y1), (expanded_x2, expanded_y2), (255, 255, 0), 1)
 
     if frame_count % 60 == 0 and helmet_detections_found > 0:
         print(f"  🚨  Without helmet detections found: {helmet_detections_found}")
         
     # Draw the polygon on the frame for visualization
-    cv2.polylines(img, [polygon], isClosed=True, color=(0,255,255), thickness=2)
+    # Ensure polygon coordinates are within frame bounds
+    frame_height, frame_width = img.shape[:2]
+    
+    # Clip polygon coordinates to frame bounds
+    polygon_clipped = np.clip(polygon.reshape(-1, 2), [0, 0], [frame_width-1, frame_height-1])
+    polygon_motorcycle_clipped = np.clip(polygon_motorcycle.reshape(-1, 2), [0, 0], [frame_width-1, frame_height-1])
+    
+    # Reshape back to the format needed for polylines
+    polygon_clipped = polygon_clipped.reshape((-1, 1, 2))
+    polygon_motorcycle_clipped = polygon_motorcycle_clipped.reshape((-1, 1, 2))
+    
+    # Draw polygons with different colors
+    cv2.polylines(img, [polygon_clipped], isClosed=True, color=(0,255,255), thickness=3)  # Yellow for general polygon
+    cv2.polylines(img, [polygon_motorcycle_clipped], isClosed=True, color=(0,255,0), thickness=3)  # Green for motorcycle polygon
+    
+    # Add labels for the polygons
+    cv2.putText(img, "General Detection Area", (polygon_clipped[0][0][0], polygon_clipped[0][0][1]-10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+    cv2.putText(img, "Motorcycle Detection Area", (polygon_motorcycle_clipped[0][0][0], polygon_motorcycle_clipped[0][0][1]-10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
     
     # Write frame to output video
     out.write(img)

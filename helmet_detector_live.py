@@ -311,10 +311,26 @@ if width > 1000:  # High resolution camera
                        [int(width*0.1), int(height*0.9)], 
                        [int(width*0.9), int(height*0.9)], 
                        [int(width*0.9), int(height*0.1)]], np.int32)
+    # Motorcycle-specific polygon (scaled for high resolution)
+    # Updated coordinates to match video script
+    polygon_motorcycle = np.array([[int(width*0.004), int(height*0.9)], 
+                                  [int(width*0.001), int(height*1.36)], 
+                                  [int(width*0.84), int(height*1.31)], 
+                                  [int(width*1.0), int(height*0.9)],
+                                  [int(width*0.5), int(height*0.68)]], np.int32)
 else:  # Standard resolution
     polygon = np.array([[50, 50], [50, height-50], [width-50, height-50], 
                        [width-50, 50]], np.int32)
+    # Motorcycle-specific polygon (scaled for standard resolution)
+    # Updated coordinates to match video script
+    polygon_motorcycle = np.array([[int(width*0.004), int(height*0.9)], 
+                                  [int(width*0.001), int(height*1.36)], 
+                                  [int(width*0.84), int(height*1.31)], 
+                                  [int(width*1.0), int(height*0.9)],
+                                  [int(width*0.5), int(height*0.68)]], np.int32)
+
 polygon = polygon.reshape((-1, 1, 2))
+polygon_motorcycle = polygon_motorcycle.reshape((-1, 1, 2))
 
 print("🔴 Starting live detection with polygon cropping optimization...")
 print(f"Polygon area: {cv2.contourArea(polygon):.0f} pixels")
@@ -582,14 +598,19 @@ try:
                         y2_full = y2 + crop_offset[1]
                         
                         if cls == MOTORCYCLE_CLASS:
-                            motorcycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
-                            total_motorcycles_detected += 1
+                            # Calculate center of motorcycle bounding box
+                            cx, cy = x1_full + (x2_full - x1_full) // 2, y1_full + (y2_full - y1_full) // 2
                             
-                            # Extract motorcycle ROI and detect color (from full frame)
-                            motorcycle_roi = img[y1_full:y2_full, x1_full:x2_full]
-                            if motorcycle_roi.size > 0:  # Ensure ROI is not empty
-                                color_name, hue_value = detect_color(motorcycle_roi)
-                                motorcycle_colors_detected[color_name] += 1
+                            # Check if center is inside polygon_motorcycle
+                            if cv2.pointPolygonTest(polygon_motorcycle, (cx, cy), False) >= 0:
+                                motorcycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
+                                total_motorcycles_detected += 1
+                                
+                                # Extract motorcycle ROI and detect color (from full frame)
+                                motorcycle_roi = img[y1_full:y2_full, x1_full:x2_full]
+                                if motorcycle_roi.size > 0:  # Ensure ROI is not empty
+                                    color_name, hue_value = detect_color(motorcycle_roi)
+                                    motorcycle_colors_detected[color_name] += 1
                                 
                         elif cls == BICYCLE_CLASS:
                             bicycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
@@ -611,14 +632,19 @@ try:
                             y2_full = y2 + crop_offset[1]
                             
                             if cls == MOTORCYCLE_CLASS:
-                                motorcycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
-                                total_motorcycles_detected += 1
+                                # Calculate center of motorcycle bounding box
+                                cx, cy = x1_full + (x2_full - x1_full) // 2, y1_full + (y2_full - y1_full) // 2
                                 
-                                # Extract motorcycle ROI and detect color (from full frame)
-                                motorcycle_roi = img[y1_full:y2_full, x1_full:x2_full]
-                                if motorcycle_roi.size > 0:  # Ensure ROI is not empty
-                                    color_name, hue_value = detect_color(motorcycle_roi)
-                                    motorcycle_colors_detected[color_name] += 1
+                                # Check if center is inside polygon_motorcycle
+                                if cv2.pointPolygonTest(polygon_motorcycle, (cx, cy), False) >= 0:
+                                    motorcycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
+                                    total_motorcycles_detected += 1
+                                    
+                                    # Extract motorcycle ROI and detect color (from full frame)
+                                    motorcycle_roi = img[y1_full:y2_full, x1_full:x2_full]
+                                    if motorcycle_roi.size > 0:  # Ensure ROI is not empty
+                                        color_name, hue_value = detect_color(motorcycle_roi)
+                                        motorcycle_colors_detected[color_name] += 1
                                     
                             elif cls == BICYCLE_CLASS:
                                 bicycles_detected.append((x1_full, y1_full, x2_full, y2_full, conf))
@@ -628,75 +654,126 @@ try:
         current_frame_helmets = 0
         current_frame_no_helmets = 0
         
-        # Detect helmets using the custom helmet model on cropped area
-        if not skip_detection and cropped_img is not None:
-            if USING_RKNN:
-                helmet_results = helmet_model.inference(cropped_img)
-            else:
-                helmet_results = helmet_model(cropped_img, 
-                                            stream=False,
-                                            conf=0.45, 
-                                            verbose=RDK_X5_CONFIG['verbose'],
-                                            max_det=RDK_X5_CONFIG['max_det'],
-                                            agnostic_nms=RDK_X5_CONFIG['agnostic_nms'])
+        # Detect helmets only for detected motorcycles
+        for motorcycle in motorcycles_detected:
+            mx1, my1, mx2, my2, mconf = motorcycle
             
-            # Process helmet detection results
-            if USING_RKNN:
-                if helmet_results is not None:
-                    detections = parse_rknn_helmet_output(helmet_results, conf_threshold=0.45)
-                    for detection in detections:
-                        x1, y1, x2, y2 = detection['bbox']
-                        conf = detection['confidence']
-                        cls = detection['class']
-                        
-                        # Adjust coordinates back to full frame
-                        x1_full = x1 + crop_offset[0]
-                        y1_full = y1 + crop_offset[1]
-                        x2_full = x2 + crop_offset[0] 
-                        y2_full = y2 + crop_offset[1]
-                        
-                        if cls == 0:  # With helmet
-                            total_helmets_detected += 1
-                            current_frame_helmets += 1
+            # Expand motorcycle bounding box slightly to include potential helmet area
+            # Helmets are typically above the motorcycle, so expand upward
+            expansion_factor = 0.3  # 30% expansion
+            width = mx2 - mx1
+            height = my2 - my1
+            
+            # Expand upward more than other directions for helmet detection
+            expanded_x1 = max(0, int(mx1 - width * expansion_factor * 0.5))
+            expanded_y1 = max(0, int(my1 - height * expansion_factor * 1.5))  # More expansion upward
+            expanded_x2 = min(img.shape[1], int(mx2 + width * expansion_factor * 0.5))
+            expanded_y2 = min(img.shape[0], int(my2 + height * expansion_factor * 0.5))
+            
+            # Extract expanded ROI for helmet detection
+            motorcycle_roi = img[expanded_y1:expanded_y2, expanded_x1:expanded_x2]
+            
+            if motorcycle_roi.size > 0 and not skip_detection:
+                # Detect helmets in the motorcycle ROI
+                if USING_RKNN:
+                    helmet_results = helmet_model.inference(motorcycle_roi)
+                else:
+                    helmet_results = helmet_model(motorcycle_roi, 
+                                                stream=False,
+                                                conf=0.45, 
+                                                verbose=RDK_X5_CONFIG['verbose'],
+                                                max_det=RDK_X5_CONFIG['max_det'],
+                                                agnostic_nms=RDK_X5_CONFIG['agnostic_nms'])
+                
+                # Process helmet detection results
+                if USING_RKNN:
+                    if helmet_results is not None:
+                        detections = parse_rknn_helmet_output(helmet_results, conf_threshold=0.45)
+                        for detection in detections:
+                            hx1, hy1, hx2, hy2 = detection['bbox']
+                            conf = detection['confidence']
+                            cls = detection['class']
                             
-                        elif cls == 1:  # Without helmet
-                            total_without_helmets_detected += 1
-                            current_frame_no_helmets += 1
-                            helmet_detections_found += 1
+                            # Convert ROI coordinates back to full image coordinates
+                            full_hx1 = hx1 + expanded_x1
+                            full_hy1 = hy1 + expanded_y1
+                            full_hx2 = hx2 + expanded_x1
+                            full_hy2 = hy2 + expanded_y1
                             
-                            # Play audio alert (with cooldown to prevent spam)
-                            if should_play_alert():
-                                play_alert_sound("Wear a helmet")
-            else:
-                if helmet_results and len(helmet_results) > 0:
-                    boxes = helmet_results[0].boxes  # Get first (and only) result since stream=False
-                    if boxes is not None:
-                        for box in boxes:
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            conf = round(box.conf[0].item(), 2)
-                            cls = int(box.cls[0])
+                            # Calculate center of helmet detection
+                            hcx, hcy = full_hx1 + (full_hx2 - full_hx1) // 2, full_hy1 + (full_hy2 - full_hy1) // 2
                             
-                            # Adjust coordinates back to full frame
-                            x1_full = x1 + crop_offset[0]
-                            y1_full = y1 + crop_offset[1]
-                            x2_full = x2 + crop_offset[0] 
-                            y2_full = y2 + crop_offset[1]
-                            
-                            if cls == 0:  # With helmet
-                                total_helmets_detected += 1
-                                current_frame_helmets += 1
+                            # Check if helmet center is inside the general polygon
+                            if cv2.pointPolygonTest(polygon, (hcx, hcy), False) >= 0:
+                                if cls == 0:  # With helmet
+                                    total_helmets_detected += 1
+                                    current_frame_helmets += 1
+                                    
+                                elif cls == 1:  # Without helmet
+                                    total_without_helmets_detected += 1
+                                    current_frame_no_helmets += 1
+                                    helmet_detections_found += 1
+                                    
+                                    # Play audio alert (with cooldown to prevent spam)
+                                    if should_play_alert():
+                                        play_alert_sound("Wear a helmet")
+                else:
+                    if helmet_results and len(helmet_results) > 0:
+                        boxes = helmet_results[0].boxes  # Get first (and only) result since stream=False
+                        if boxes is not None:
+                            for box in boxes:
+                                hx1, hy1, hx2, hy2 = map(int, box.xyxy[0])
+                                conf = round(box.conf[0].item(), 2)
+                                cls = int(box.cls[0])
                                 
-                            elif cls == 1:  # Without helmet
-                                total_without_helmets_detected += 1
-                                current_frame_no_helmets += 1
-                                helmet_detections_found += 1
+                                # Convert ROI coordinates back to full image coordinates
+                                full_hx1 = hx1 + expanded_x1
+                                full_hy1 = hy1 + expanded_y1
+                                full_hx2 = hx2 + expanded_x1
+                                full_hy2 = hy2 + expanded_y1
                                 
-                                # Play audio alert (with cooldown to prevent spam)
-                                if should_play_alert():
-                                    play_alert_sound("Wear a helmet")
+                                # Calculate center of helmet detection
+                                hcx, hcy = full_hx1 + (full_hx2 - full_hx1) // 2, full_hy1 + (full_hy2 - full_hy1) // 2
+                                
+                                # Check if helmet center is inside the general polygon
+                                if cv2.pointPolygonTest(polygon, (hcx, hcy), False) >= 0:
+                                    if cls == 0:  # With helmet
+                                        total_helmets_detected += 1
+                                        current_frame_helmets += 1
+                                        
+                                    elif cls == 1:  # Without helmet
+                                        total_without_helmets_detected += 1
+                                        current_frame_no_helmets += 1
+                                        helmet_detections_found += 1
+                                        
+                                        # Play audio alert (with cooldown to prevent spam)
+                                        if should_play_alert():
+                                            play_alert_sound("Wear a helmet")
                             
 
 
+        
+        # Draw the polygon on the frame for visualization
+        # Ensure polygon coordinates are within frame bounds
+        frame_height, frame_width = img.shape[:2]
+        
+        # Clip polygon coordinates to frame bounds
+        polygon_clipped = np.clip(polygon.reshape(-1, 2), [0, 0], [frame_width-1, frame_height-1])
+        polygon_motorcycle_clipped = np.clip(polygon_motorcycle.reshape(-1, 2), [0, 0], [frame_width-1, frame_height-1])
+        
+        # Reshape back to the format needed for polylines
+        polygon_clipped = polygon_clipped.reshape((-1, 1, 2))
+        polygon_motorcycle_clipped = polygon_motorcycle_clipped.reshape((-1, 1, 2))
+        
+        # Draw polygons with different colors
+        cv2.polylines(img, [polygon_clipped], isClosed=True, color=(0,255,255), thickness=3)  # Yellow for general polygon
+        cv2.polylines(img, [polygon_motorcycle_clipped], isClosed=True, color=(0,255,0), thickness=3)  # Green for motorcycle polygon
+        
+        # Add labels for the polygons
+        cv2.putText(img, "General Detection Area", (polygon_clipped[0][0][0], polygon_clipped[0][0][1]-10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+        cv2.putText(img, "Motorcycle Detection Area", (polygon_motorcycle_clipped[0][0][0], polygon_motorcycle_clipped[0][0][1]-10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
         
         # Display the frame
         cv2.imshow('Live Helmet Detection', img)
