@@ -18,7 +18,7 @@ print(f'DEBUG: Script directory: {os.path.dirname(os.path.abspath(__file__))}')
 print('='*60)
 
 # Initialize video capture
-video_path = "media/test1.mp4"
+video_path = "media/test3.mp4"
 cap = cv2.VideoCapture(video_path)
 
 # Get video properties for output
@@ -27,7 +27,7 @@ width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 # Create video writer for output
-output_path = "media/test1-detected.mp4"
+output_path = "media/test3-detected.mp4"
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
@@ -41,22 +41,60 @@ classNames = ['With Helmet', 'Without Helmet']
 MOTORCYCLE_CLASS = 3  # motorcycle in COCO
 BICYCLE_CLASS = 1     # bicycle in COCO
 
-# Polygon coordinates from user (HTML image map)
-polygon = np.array([[2141,1031], [700,700], [700,5], [15,8], [9,1685], [1810,1691]], np.int32)
-polygon_motorcycle = np.array([
-    [8, 647],
-    [3, 1301],
-    [1814, 1299],
-    [700, 700],
-    [700, 390]
+# Normalized polygon coordinates as fractions of width and height
+# These will be converted to actual pixel coordinates based on video dimensions
+# All coordinates are normalized to stay within 0.0 to 1.0 range
+polygon_normalized = np.array([
+    [0.95, 0.95],   # Top right
+    [0.42, 0.65],   # Upper middle
+    [0.42, 0.005],  # Top middle
+    [0.008, 0.007], # Top left
+    [0.005, 0.95],  # Bottom left (clipped from 1.56 to 0.95)
+    [0.94, 0.95]    # Bottom right (clipped from 1.57 to 0.95)
 ])
 
-polygon_motorcycle = polygon_motorcycle.reshape((-1, 1, 2))
-polygon = polygon.reshape((-1, 1, 2))
+polygon_motorcycle_normalized = np.array([
+    [0.004, 0.53],  # Bottom left
+    [0.002, 0.95],  # Far bottom left (clipped from 1.20 to 0.95)
+    [0.94, 0.95],   # Far bottom right (clipped from 1.20 to 0.95)
+    [0.42, 0.63],   # Bottom middle
+    [0.42, 0.30]    # Upper middle
+])
+
+# Convert normalized coordinates to actual pixel coordinates based on video dimensions
+def convert_normalized_to_pixel_coordinates(normalized_coords, width, height):
+    """Convert normalized coordinates (0-1) to pixel coordinates"""
+    pixel_coords = []
+    for coord in normalized_coords:
+        x = int(coord[0] * width)
+        y = int(coord[1] * height)
+        pixel_coords.append([x, y])
+    return np.array(pixel_coords, dtype=np.int32)
+
+# Initialize polygon variables (will be set after getting video dimensions)
+polygon = None
+polygon_motorcycle = None
+mask_general = None
 
 print(f"Processing video: {video_path}")
 print(f"Output will be saved to: {output_path}")
 print(f"Video properties: {width}x{height} @ {fps}fps")
+
+# Convert normalized coordinates to actual pixel coordinates based on video dimensions
+polygon = convert_normalized_to_pixel_coordinates(polygon_normalized, width, height)
+polygon_motorcycle = convert_normalized_to_pixel_coordinates(polygon_motorcycle_normalized, width, height)
+
+# Reshape for OpenCV functions
+polygon = polygon.reshape((-1, 1, 2))
+polygon_motorcycle = polygon_motorcycle.reshape((-1, 1, 2))
+
+# Create masks for polygons (same size as video frame)
+mask_general = np.zeros((height, width), dtype=np.uint8)
+cv2.fillPoly(mask_general, [polygon], 255)
+
+print(f"✅ Polygon coordinates converted for {width}x{height} resolution")
+print(f"   General polygon: {len(polygon_normalized)} points")
+print(f"   Motorcycle polygon: {len(polygon_motorcycle_normalized)} points")
 
 frame_count = 0
 total_helmets_detected = 0
@@ -72,6 +110,7 @@ def detect_color(img):
     # Mask out very low saturation/brightness for colored pixels
     color_mask = (hsv[:,:,1] > 50) & (hsv[:,:,2] > 50)
     hue_values = hsv[:,:,0][color_mask]
+    sat_values = hsv[:,:,1][color_mask]
 
     # Check for black / dark pixels
     dark_mask = hsv[:,:,2] < 50  # low brightness
@@ -88,8 +127,14 @@ def detect_color(img):
     dominant_hue = np.argmax(hist)
     h = dominant_hue
 
+    hist,bins = np.histogram(sat_values, bins=100, range=[0,255])
+    dominant_sat = np.argmax(hist)
+    s = dominant_sat
+
     # Map hue → color
-    if (h >= 0 and h <= 10) or (h >= 170 and h <= 179):
+    if s < 10:
+        color_name = "White"
+    elif (h >= 0 and h <= 10) or (h >= 170 and h <= 179):
         color_name = "Red"
     elif h >= 11 and h <= 20:
         color_name = "Orange"
@@ -114,13 +159,15 @@ while True:
     if not success:
         print("End of video reached")
         break
+
+    img_masked = cv2.bitwise_and(img, img, mask=mask_general)
     
     frame_count += 1
     if frame_count % 30 == 0:  # Print progress every 30  frames
         print(f"Processing frame {frame_count}")
     
     # First, detect vehicles (motorcycles/bicycles) using YOLOv8m
-    vehicle_results = vehicle_model(img, stream=True, conf=0.5)
+    vehicle_results = vehicle_model(img_masked, stream=True, conf=0.5)
     motorcycles_detected = []
     bicycles_detected = []
     
@@ -259,7 +306,13 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
     cv2.putText(img, "Motorcycle Detection Area", (polygon_motorcycle_clipped[0][0][0], polygon_motorcycle_clipped[0][0][1]-10), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-    
+
+    # Overlay general mask in red
+    overlay = img.copy()
+    overlay[mask_general == 255] = (0, 0, 255)  # red overlay
+    alpha = 0.3
+    img = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
     # Write frame to output video
     out.write(img)
 

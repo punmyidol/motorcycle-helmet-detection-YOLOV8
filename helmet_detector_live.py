@@ -304,31 +304,38 @@ classNames = ['With Helmet', 'Without Helmet']
 MOTORCYCLE_CLASS = 3  # motorcycle in COCO
 BICYCLE_CLASS = 1     # bicycle in COCO
 
-# Polygon coordinates from user (scaled for camera resolution)
-# Default polygon for full detection area, adjust as needed for your camera view
-if width > 1000:  # High resolution camera
-    polygon = np.array([[int(width*0.1), int(height*0.1)], 
-                       [int(width*0.1), int(height*0.9)], 
-                       [int(width*0.9), int(height*0.9)], 
-                       [int(width*0.9), int(height*0.1)]], np.int32)
-    # Motorcycle-specific polygon (scaled for high resolution)
-    # Updated coordinates to match video script
-    polygon_motorcycle = np.array([[int(width*0.004), int(height*0.9)], 
-                                  [int(width*0.001), int(height*1.36)], 
-                                  [int(width*0.84), int(height*1.31)], 
-                                  [int(width*1.0), int(height*0.9)],
-                                  [int(width*0.5), int(height*0.68)]], np.int32)
-else:  # Standard resolution
-    polygon = np.array([[50, 50], [50, height-50], [width-50, height-50], 
-                       [width-50, 50]], np.int32)
-    # Motorcycle-specific polygon (scaled for standard resolution)
-    # Updated coordinates to match video script
-    polygon_motorcycle = np.array([[int(width*0.004), int(height*0.9)], 
-                                  [int(width*0.001), int(height*1.36)], 
-                                  [int(width*0.84), int(height*1.31)], 
-                                  [int(width*1.0), int(height*0.9)],
-                                  [int(width*0.5), int(height*0.68)]], np.int32)
+# Normalized polygon coordinates as fractions of width and height
+# These will be converted to actual pixel coordinates based on camera dimensions
+polygon_normalized = np.array([
+    [0.1, 0.1],     # Top left
+    [0.1, 0.9],     # Bottom left
+    [0.9, 0.9],     # Bottom right
+    [0.9, 0.1]      # Top right
+])
 
+polygon_motorcycle_normalized = np.array([
+    [0.004, 0.53],  # Bottom left
+    [0.002, 0.95],  # Far bottom left (clipped from 1.20 to 0.95)
+    [0.94, 0.95],   # Far bottom right (clipped from 1.20 to 0.95)
+    [0.42, 0.63],   # Bottom middle
+    [0.42, 0.30]    # Upper middle
+])
+
+# Convert normalized coordinates to actual pixel coordinates based on camera dimensions
+def convert_normalized_to_pixel_coordinates(normalized_coords, width, height):
+    """Convert normalized coordinates (0-1) to pixel coordinates"""
+    pixel_coords = []
+    for coord in normalized_coords:
+        x = int(coord[0] * width)
+        y = int(coord[1] * height)
+        pixel_coords.append([x, y])
+    return np.array(pixel_coords, dtype=np.int32)
+
+# Convert normalized coordinates to actual pixel coordinates
+polygon = convert_normalized_to_pixel_coordinates(polygon_normalized, width, height)
+polygon_motorcycle = convert_normalized_to_pixel_coordinates(polygon_motorcycle_normalized, width, height)
+
+# Reshape for OpenCV functions
 polygon = polygon.reshape((-1, 1, 2))
 polygon_motorcycle = polygon_motorcycle.reshape((-1, 1, 2))
 
@@ -768,13 +775,6 @@ try:
         # Draw polygons with different colors
         cv2.polylines(img, [polygon_clipped], isClosed=True, color=(0,255,255), thickness=3)  # Yellow for general polygon
         cv2.polylines(img, [polygon_motorcycle_clipped], isClosed=True, color=(0,255,0), thickness=3)  # Green for motorcycle polygon
-        
-        # Add labels for the polygons
-        cv2.putText(img, "General Detection Area", (polygon_clipped[0][0][0], polygon_clipped[0][0][1]-10), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
-        cv2.putText(img, "Motorcycle Detection Area", (polygon_motorcycle_clipped[0][0][0], polygon_motorcycle_clipped[0][0][1]-10), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-        
         # Display the frame
         cv2.imshow('Live Helmet Detection', img)
         
