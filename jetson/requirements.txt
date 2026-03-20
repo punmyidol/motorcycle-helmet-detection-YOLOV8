@@ -1,0 +1,12 @@
+# Jetson Nano — Python 2.7 compatible dependencies
+#
+# OpenCV: install via apt on Jetson rather than pip where possible:
+#   sudo apt-get install python-opencv
+# The pip package below is a fallback if the apt version is unavailable.
+opencv-python==3.4.18.65
+
+# ZeroMQ Python bindings — last version with full Py2.7 support
+pyzmq==19.0.2
+
+# numpy is usually pre-installed on Jetson; pin to a Py2.7-compatible version
+numpy==1.16.6
