@@ -1,0 +1,11 @@
+# Alert Device (Raspberry Pi or Jetson Nano) -- Python 2.7 compatible
+
+# ZeroMQ -- matches version used on Jetson
+pyzmq==19.0.2
+
+# GPIO -- uncomment the correct library for your board:
+# RPi.GPIO==0.7.1       # Raspberry Pi
+# Jetson.GPIO==2.0.17   # Jetson Nano
+
+# Optional audio alert (uncomment if using pygame for sound output):
+# pygame==1.9.6
