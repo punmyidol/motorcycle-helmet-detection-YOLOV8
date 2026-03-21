@@ -21,7 +21,7 @@ JPEG_QUALITY = 80          # 0-100; 80 keeps file small without visible loss
 # ── MOTION GATE ───────────────────────────────────────────────────────────────
 # Conservative settings -- only skip frames that are truly static.
 # Raise MOTION_THRESHOLD to skip more frames (more aggressive gating).
-MOTION_THRESHOLD   = 500   # minimum changed-pixel count to count as motion
+MOTION_THRESHOLD   = 600000   # minimum changed-pixel count to count as motion
 MOTION_BLUR_KERNEL = 5     # gaussian blur kernel size (must be odd)
 MOTION_DIFF_THRESH = 25    # per-pixel abs-diff value to call a pixel "changed"
 

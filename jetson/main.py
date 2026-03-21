@@ -11,18 +11,30 @@ from config import (
 from motion_gate import MotionGate
 from preprocessor import Preprocessor
 from sender import FrameSender
+from capture_props import get_capture_props
+
+
+def _set_prop(cap, cv3_const, cv2_const, value):
+    """Set a VideoCapture property, falling back to the OpenCV 2.x constant."""
+    try:
+        cap.set(cv3_const, value)
+    except AttributeError:
+        cap.set(cv2_const, value)
 
 
 def open_camera(source):
-    """Open camera and apply resolution/FPS hints. Returns cv2.VideoCapture."""
+    """Open camera, apply resolution/FPS hints, and log actual properties."""
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         print("[Main] ERROR: Cannot open camera source: %s" % str(source))
         sys.exit(1)
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAPTURE_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS,          CAPTURE_FPS)
+    _set_prop(cap, cv2.CAP_PROP_FRAME_WIDTH,  cv2.cv.CV_CAP_PROP_FRAME_WIDTH,  CAPTURE_WIDTH)
+    _set_prop(cap, cv2.CAP_PROP_FRAME_HEIGHT, cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+    _set_prop(cap, cv2.CAP_PROP_FPS,          cv2.cv.CV_CAP_PROP_FPS,          CAPTURE_FPS)
+
+    actual_w, actual_h, actual_fps = get_capture_props(cap)
+    print("[Main] Camera opened: %dx%d @ %d fps" % (actual_w, actual_h, actual_fps))
     return cap
 
 
@@ -31,15 +43,15 @@ def main():
     print("  HELMET DETECTION -- JETSON CAPTURE NODE")
     print("=" * 50)
 
-    cap        = open_camera(CAMERA_SOURCE)
-    gate       = MotionGate()
+    cap          = open_camera(CAMERA_SOURCE)
+    gate         = MotionGate()
     preprocessor = Preprocessor()
-    sender     = FrameSender()
+    sender       = FrameSender()
 
-    frames_read   = 0
-    frames_sent   = 0
+    frames_read    = 0
+    frames_sent    = 0
     frames_skipped = 0
-    t_start       = time.time()
+    t_start        = time.time()
 
     print("[Main] Capture loop started. Press Ctrl+C to stop.")
 
@@ -53,25 +65,25 @@ def main():
 
             frames_read += 1
 
-            # ── MOTION GATE ───────────────────────────────────────────────────
+            # -- MOTION GATE --------------------------------------------------
             if not gate.has_motion(frame):
                 frames_skipped += 1
                 continue
 
-            # ── PREPROCESS ────────────────────────────────────────────────────
+            # -- PREPROCESS ---------------------------------------------------
             jpeg_bytes = preprocessor.process(frame)
             if jpeg_bytes is None:
                 print("[Main] WARNING: JPEG encode failed, skipping frame")
                 continue
 
-            # ── SEND ──────────────────────────────────────────────────────────
+            # -- SEND ---------------------------------------------------------
             success = sender.send(jpeg_bytes)
             if success:
                 frames_sent += 1
             else:
                 print("[Main] WARNING: Frame not acknowledged by cloud")
 
-            # ── STATS (every 100 frames read) ─────────────────────────────────
+            # -- STATS (every 100 frames read) --------------------------------
             if frames_read % 100 == 0:
                 elapsed  = time.time() - t_start
                 fps_read = frames_read  / elapsed
