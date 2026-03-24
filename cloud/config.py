@@ -19,8 +19,8 @@ DB_PATH = Path(__file__).parent / "detections.db"
 
 # ── CAMERA RESOLUTION ─────────────────────────────────────────────────────────
 # Must match the resolution the Jetson is sending frames at
-FRAME_WIDTH  = 1920
-FRAME_HEIGHT = 1080
+FRAME_WIDTH  = 640
+FRAME_HEIGHT = 640
 
 # ── DETECTION ZONES ───────────────────────────────────────────────────────────
 # Normalized coordinates (0.0 - 1.0) from your original script.
