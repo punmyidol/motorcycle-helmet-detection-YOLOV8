@@ -1,111 +1,121 @@
-import sys
+import logging
 import time
+
 import cv2
 
 from config import (
-    CAMERA_SOURCE,
-    CAPTURE_WIDTH,
-    CAPTURE_HEIGHT,
-    CAPTURE_FPS,
+    CAMERA_INDEX,
+    CAMERA_FPS,
+    FRAME_WIDTH,
+    FRAME_HEIGHT,
+    MODEL_INPUT_SIZE,
+    JPEG_QUALITY,
+    MOTION_THRESHOLD,
+    MOTION_BLUR_KSIZE,
+    MOTION_DILATE_ITER,
+    CLOUD_IP,
+    INFERENCE_PORT,
+    SEND_TIMEOUT_MS,
+    RECV_TIMEOUT_MS,
 )
 from motion_gate import MotionGate
 from preprocessor import Preprocessor
 from sender import FrameSender
-from capture_props import get_capture_props
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
-def _set_prop(cap, cv3_const, cv2_const, value):
-    """Set a VideoCapture property, falling back to the OpenCV 2.x constant."""
-    try:
-        cap.set(cv3_const, value)
-    except AttributeError:
-        cap.set(cv2_const, value)
-
-
-def open_camera(source):
-    """Open camera, apply resolution/FPS hints, and log actual properties."""
-    cap = cv2.VideoCapture(source)
+def open_camera(index: int, width: int, height: int, fps: int) -> cv2.VideoCapture:
+    cap = cv2.VideoCapture(index)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS,          fps)
     if not cap.isOpened():
-        print("[Main] ERROR: Cannot open camera source: %s" % str(source))
-        sys.exit(1)
-
-    cap.set(3, 1920)  # width
-    cap.set(4, 1080)  # height
-    cap.set(5, 30)    # fps
-
-    actual_w, actual_h, actual_fps = get_capture_props(cap)
-    print("[Main] Camera opened: %dx%d @ %d fps" % (actual_w, actual_h, actual_fps))
+        raise RuntimeError(f"Cannot open camera at index {index}")
+    logger.info("Camera opened: %dx%d @ %d fps", width, height, fps)
     return cap
 
 
-def main():
+def main() -> None:
     print("=" * 50)
-    print("  HELMET DETECTION -- JETSON CAPTURE NODE")
+    print("  HELMET DETECTION — JETSON NANO")
     print("=" * 50)
 
-    cap          = open_camera(CAMERA_SOURCE)
-    gate         = MotionGate()
-    preprocessor = Preprocessor()
-    sender       = FrameSender()
+    # ── INIT ──────────────────────────────────────────────────────────────────
+    cap = open_camera(CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT, CAMERA_FPS)
 
-    frames_read    = 0
-    frames_sent    = 0
-    frames_skipped = 0
-    t_start        = time.time()
+    gate = MotionGate(
+        threshold=MOTION_THRESHOLD,
+        blur_ksize=MOTION_BLUR_KSIZE,
+        dilate_iterations=MOTION_DILATE_ITER,
+    )
+    preprocessor = Preprocessor(
+        model_input_size=MODEL_INPUT_SIZE,
+        jpeg_quality=JPEG_QUALITY,
+    )
+    sender = FrameSender(
+        cloud_ip=CLOUD_IP,
+        inference_port=INFERENCE_PORT,
+        send_timeout_ms=SEND_TIMEOUT_MS,
+        recv_timeout_ms=RECV_TIMEOUT_MS,
+    )
 
-    print("[Main] Capture loop started. Press Ctrl+C to stop.")
+    # ── STATS ─────────────────────────────────────────────────────────────────
+    frames_captured = 0
+    frames_sent     = 0
+    frames_skipped  = 0
+
+    logger.info("Starting capture loop — press Ctrl-C to stop")
 
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
-                print("[Main] WARNING: Failed to read frame, retrying...")
-                time.sleep(0.1)
+                logger.warning("Failed to read frame — retrying in 1 s")
+                time.sleep(1.0)
+                gate.reset()
                 continue
 
-            frames_read += 1
+            frames_captured += 1
 
-            # -- MOTION GATE --------------------------------------------------
+            # ── MOTION GATE ───────────────────────────────────────────────────
             if not gate.has_motion(frame):
                 frames_skipped += 1
+                if frames_skipped % 300 == 0:
+                    logger.info(
+                        "Stats → captured: %d | sent: %d | skipped: %d",
+                        frames_captured, frames_sent, frames_skipped,
+                    )
                 continue
 
-            # -- PREPROCESS ---------------------------------------------------
-            jpeg_bytes = preprocessor.process(frame)
-            if jpeg_bytes is None:
-                print("[Main] WARNING: JPEG encode failed, skipping frame")
+            # ── PREPROCESS ────────────────────────────────────────────────────
+            try:
+                jpeg_bytes = preprocessor.process(frame)
+            except ValueError as exc:
+                logger.error("Preprocessing failed: %s", exc)
                 continue
 
-            # -- SEND ---------------------------------------------------------
-            success = sender.send(jpeg_bytes)
-            if success:
+            # ── SEND ──────────────────────────────────────────────────────────
+            if sender.send(jpeg_bytes):
                 frames_sent += 1
+                logger.debug("Frame sent (%d bytes)", len(jpeg_bytes))
             else:
-                print("[Main] WARNING: Frame not acknowledged by cloud")
-
-            # -- STATS (every 100 frames read) --------------------------------
-            if frames_read % 100 == 0:
-                elapsed  = time.time() - t_start
-                fps_read = frames_read  / elapsed
-                fps_sent = frames_sent  / elapsed
-                skip_pct = 100.0 * frames_skipped / frames_read
-                print("[Main] read=%.1f fps  sent=%.1f fps  skipped=%.1f%%" % (
-                    fps_read, fps_sent, skip_pct))
+                logger.warning("Frame dropped (send failed)")
 
     except KeyboardInterrupt:
-        print("\n[Main] Interrupted by user, shutting down...")
+        print("\n[Main] Interrupted by user")
 
     finally:
         cap.release()
         sender.close()
-
-        elapsed = time.time() - t_start
-        print("[Main] Session summary:")
-        print("  Total frames read : %d" % frames_read)
-        print("  Frames sent       : %d" % frames_sent)
-        print("  Frames skipped    : %d" % frames_skipped)
-        print("  Runtime           : %.1f s" % elapsed)
-        print("[Main] Clean shutdown complete.")
+        logger.info(
+            "Shutdown complete. Total → captured: %d | sent: %d | skipped: %d",
+            frames_captured, frames_sent, frames_skipped,
+        )
 
 
 if __name__ == "__main__":

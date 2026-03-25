@@ -1,31 +1,22 @@
-# cloud IP, ports, thresholds
+# ── CLOUD SERVER ──────────────────────────────────────────────────────────────
+CLOUD_IP            = "x.x.x.x"   # replace with your cloud server IP
+INFERENCE_PORT      = 5555
 
 # ── CAMERA ────────────────────────────────────────────────────────────────────
-# Set to an integer (0, 1, ...) for a USB webcam, or a string for an RTSP URL.
-# Examples:
-#   CAMERA_SOURCE = 0
-#   CAMERA_SOURCE = "rtsp://user:pass@192.168.1.10:554/stream"
-CAMERA_SOURCE = 0
-
-CAPTURE_WIDTH  = 1920
-CAPTURE_HEIGHT = 1080
-CAPTURE_FPS    = 30        # target FPS for cv2.VideoCapture
+CAMERA_INDEX        = 2
+FRAME_WIDTH         = 1920
+FRAME_HEIGHT        = 1080
+CAMERA_FPS          = 30
 
 # ── PREPROCESSING ─────────────────────────────────────────────────────────────
-# Resolution sent to the cloud (must match what the YOLO model expects)
-INFER_WIDTH  = 640
-INFER_HEIGHT = 640
-
-JPEG_QUALITY = 80          # 0-100; 80 keeps file small without visible loss
+MODEL_INPUT_SIZE    = 640          # YOLO input resolution (square)
+JPEG_QUALITY        = 80           # compression quality sent over network
 
 # ── MOTION GATE ───────────────────────────────────────────────────────────────
-# Conservative settings -- only skip frames that are truly static.
-# Raise MOTION_THRESHOLD to skip more frames (more aggressive gating).
-MOTION_THRESHOLD   = 600000   # minimum changed-pixel count to count as motion
-MOTION_BLUR_KERNEL = 5     # gaussian blur kernel size (must be odd)
-MOTION_DIFF_THRESH = 25    # per-pixel abs-diff value to call a pixel "changed"
+MOTION_THRESHOLD    = 5_000        # min changed pixels to consider "motion"
+MOTION_BLUR_KSIZE   = 5            # gaussian blur kernel before diff
+MOTION_DILATE_ITER  = 2            # dilation passes to fill gaps
 
 # ── NETWORK ───────────────────────────────────────────────────────────────────
-CLOUD_IP        = "x.x.x.x"   # replace with your cloud server IP
-INFERENCE_PORT  = 5555
-SEND_TIMEOUT_MS = 5000         # ZMQ send/recv timeout in milliseconds
+SEND_TIMEOUT_MS     = 2_000        # ZMQ send timeout in milliseconds
+RECV_TIMEOUT_MS     = 5_000        # ZMQ recv timeout in milliseconds

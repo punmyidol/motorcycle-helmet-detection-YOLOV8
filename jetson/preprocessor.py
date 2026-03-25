@@ -1,47 +1,46 @@
 import cv2
 import numpy as np
+import logging
 
-from config import INFER_WIDTH, INFER_HEIGHT, JPEG_QUALITY
+logger = logging.getLogger(__name__)
 
 
-class Preprocessor(object):
+class Preprocessor:
     """
-    Resizes a frame to the model input resolution and JPEG-encodes it.
+    Resizes a raw camera frame to the model's expected input size and
+    JPEG-compresses it for efficient network transmission.
 
-    Keeping this as a class (rather than bare functions) makes it easy
-    to swap in letterbox-padding later if the model requires it.
+    Doing both steps on the Jetson — before sending — keeps the cloud
+    server's decode path simple and minimises bandwidth usage.
     """
 
-    def __init__(self):
-        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+    def __init__(self, model_input_size: int = 640, jpeg_quality: int = 80) -> None:
+        self._size    = model_input_size
+        self._quality = jpeg_quality
+        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, self._quality]
 
-    def process(self, frame):
+    def process(self, frame: np.ndarray) -> bytes:
         """
-        Parameters
-        ----------
-        frame : numpy.ndarray
-            Raw BGR frame, any resolution.
+        Resize *frame* to a square (model_input_size × model_input_size)
+        and return the result as compressed JPEG bytes.
 
-        Returns
-        -------
-        bytes or None
-            JPEG-encoded bytes ready to send over the network,
-            or None if encoding failed.
+        Args:
+            frame: BGR numpy array from cv2.VideoCapture.
+
+        Returns:
+            JPEG-encoded bytes ready to send over the network.
+
+        Raises:
+            ValueError: if JPEG encoding fails (e.g. corrupted frame).
         """
-        resized = self._resize(frame)
-        return self._encode(resized)
+        resized = cv2.resize(
+            frame,
+            (self._size, self._size),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
-    # ── PRIVATE ───────────────────────────────────────────────────────────────
-
-    def _resize(self, frame):
-        """Resize to INFER_WIDTH x INFER_HEIGHT using fast linear interpolation."""
-        return cv2.resize(frame, (INFER_WIDTH, INFER_HEIGHT),
-                          interpolation=cv2.INTER_LINEAR)
-
-    def _encode(self, frame):
-        """Encode numpy BGR frame to JPEG bytes."""
-        ok, buf = cv2.imencode(".jpg", frame, self._encode_params)
+        ok, buf = cv2.imencode(".jpg", resized, self._encode_params)
         if not ok:
-            return None
-        # imencode returns a numpy array; tobytes() works on both Py2 and Py3
+            raise ValueError("JPEG encoding failed — frame may be corrupted")
+
         return buf.tobytes()

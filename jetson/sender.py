@@ -1,77 +1,80 @@
 import zmq
+import logging
 
-from config import CLOUD_IP, INFERENCE_PORT, SEND_TIMEOUT_MS
+logger = logging.getLogger(__name__)
 
 
-class FrameSender(object):
+class FrameSender:
     """
-    ZeroMQ PUSH socket wrapper.
+    ZeroMQ REQ client that sends JPEG frames to the cloud inference server
+    and waits for an acknowledgement before proceeding.
 
-    Sends JPEG bytes to the cloud inference server and waits for an ACK.
-    Uses REQ/REP pattern (not PUSH/PULL) so the Jetson knows the cloud
-    received the frame before sending the next one -- natural back-pressure.
-
-    Handles reconnection transparently: if the cloud goes away and comes
-    back, ZMQ will re-establish the connection without any extra code here.
+    REQ/REP pattern guarantees ordering and provides natural back-pressure:
+    the Jetson cannot flood the cloud faster than the cloud can process.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        cloud_ip: str,
+        inference_port: int,
+        send_timeout_ms: int = 2_000,
+        recv_timeout_ms: int = 5_000,
+    ) -> None:
+        self._endpoint     = f"tcp://{cloud_ip}:{inference_port}"
+        self._send_timeout = send_timeout_ms
+        self._recv_timeout = recv_timeout_ms
+
         self._context = zmq.Context()
-        self._socket  = None
-        self._connect()
+        self._socket  = self._make_socket(send_timeout_ms, recv_timeout_ms)
 
-    def send(self, jpeg_bytes):
+        logger.info("FrameSender connected to %s", self._endpoint)
+
+    # ── PUBLIC ────────────────────────────────────────────────────────────────
+
+    def send(self, jpeg_bytes: bytes) -> bool:
         """
-        Send one JPEG frame and block until ACK is received.
+        Send *jpeg_bytes* to the cloud server.
 
-        Parameters
-        ----------
-        jpeg_bytes : bytes
-            Encoded frame from Preprocessor.process().
-
-        Returns
-        -------
-        bool
-            True on success, False on timeout or error.
+        Returns ``True`` on success, ``False`` if the server did not
+        acknowledge within the configured timeout (frame is dropped).
         """
         try:
             self._socket.send(jpeg_bytes)
-            # Wait for ACK from cloud server ("ok")
             ack = self._socket.recv_string()
-            return ack == "ok"
+            logger.debug("ACK received: %s", ack)
+            return True
         except zmq.Again:
-            print("[Sender] WARNING: send/recv timed out, dropping frame")
-            # Reconnect to clear the stuck REQ state machine
+            logger.warning("Timeout waiting for ACK — dropping frame and reconnecting")
             self._reconnect()
             return False
-        except zmq.ZMQError as e:
-            print("[Sender] ERROR: %s" % str(e))
+        except zmq.ZMQError as exc:
+            logger.error("ZMQ error: %s — reconnecting", exc)
             self._reconnect()
             return False
 
-    def close(self):
-        """Release ZMQ resources cleanly."""
-        if self._socket:
-            self._socket.close()
+    def close(self) -> None:
+        """Release ZeroMQ resources cleanly."""
+        self._socket.close()
         self._context.term()
+        logger.info("FrameSender closed")
 
     # ── PRIVATE ───────────────────────────────────────────────────────────────
 
-    def _connect(self):
-        self._socket = self._context.socket(zmq.REQ)
-        # Timeouts prevent a dead cloud server from hanging the Jetson forever
-        self._socket.setsockopt(zmq.SNDTIMEO, SEND_TIMEOUT_MS)
-        self._socket.setsockopt(zmq.RCVTIMEO, SEND_TIMEOUT_MS)
-        # Drop pending messages immediately on close (don't block shutdown)
-        self._socket.setsockopt(zmq.LINGER, 0)
-        endpoint = "tcp://%s:%d" % (CLOUD_IP, INFERENCE_PORT)
-        self._socket.connect(endpoint)
-        print("[Sender] Connected to %s" % endpoint)
+    def _make_socket(self, send_timeout_ms: int, recv_timeout_ms: int) -> zmq.Socket:
+        sock = self._context.socket(zmq.REQ)
+        sock.setsockopt(zmq.SNDTIMEO, send_timeout_ms)
+        sock.setsockopt(zmq.RCVTIMEO, recv_timeout_ms)
+        # Don't linger on close — discard unsent messages immediately
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.connect(self._endpoint)
+        return sock
 
-    def _reconnect(self):
-        print("[Sender] Reconnecting...")
+    def _reconnect(self) -> None:
+        """Destroy and recreate the REQ socket to clear a stuck state."""
         try:
             self._socket.close()
-        except Exception:
+        except zmq.ZMQError:
             pass
-        self._connect()
+
+        self._socket = self._make_socket(self._send_timeout, self._recv_timeout)
+        logger.info("Reconnected to %s", self._endpoint)
