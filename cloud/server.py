@@ -15,7 +15,7 @@ class InferenceServer:
     Sockets
     -------
         REP on INFERENCE_PORT  — receives JPEG frames from Jetson,
-                                  sends ACK back
+                                  sends detection label back as ACK
         PUSH on ALERT_PORT     — sends alert label to alert device
 
     Database
@@ -29,7 +29,7 @@ class InferenceServer:
         # ── ZEROMQ ────────────────────────────────────────────────────────────
         self.context = zmq.Context()
 
-        # REP socket — receive frame from Jetson, send ACK back
+        # REP socket — receive frame from Jetson, send label back as ACK
         self.rep_socket = self.context.socket(zmq.REP)
         self.rep_socket.bind(f"tcp://*:{inference_port}")
         logger.info(f"REP socket bound on port {inference_port}")
@@ -56,8 +56,8 @@ class InferenceServer:
                 break
             except Exception as e:
                 logger.error(f"Error handling frame: {e}")
-                # Always send ACK so Jetson REQ socket doesn't hang
-                self.rep_socket.send_string("ok")
+                # Send unknown so Jetson REQ socket doesn't hang
+                self.rep_socket.send_string("unknown")
 
     def _handle_frame(self):
         # ── RECEIVE ───────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ class InferenceServer:
 
         if frame is None:
             logger.warning("Failed to decode incoming frame, skipping")
-            self.rep_socket.send_string("ok")
+            self.rep_socket.send_string("unknown")
             return
 
         # ── INFERENCE ─────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ class InferenceServer:
         alert_label  = result["alert_label"]        # "helmet" | "no-helmet" | "unknown"
         annotated    = result["annotated_frame"]
 
-        logger.debug(f"Detection result: {alert_label}")
+        logger.info(f"Detection result: {alert_label}")
 
         # ── SAVE TO DATABASE ──────────────────────────────────────────────────
         self._save_frame(annotated, alert_label)
@@ -82,8 +82,8 @@ class InferenceServer:
         # ── PUSH LABEL TO ALERT DEVICE ────────────────────────────────────────
         self.push_socket.send_string(alert_label)
 
-        # ── ACK BACK TO JETSON ────────────────────────────────────────────────
-        self.rep_socket.send_string("ok")
+        # ── ACK BACK TO JETSON (label as response) ────────────────────────────
+        self.rep_socket.send_string(alert_label)
 
     # ── DATABASE ──────────────────────────────────────────────────────────────
 
