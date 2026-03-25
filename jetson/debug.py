@@ -1,3 +1,4 @@
+import argparse
 import logging
 import time
 
@@ -29,6 +30,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Helmet Detection — Jetson Nano")
+    p.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help="Path to input image or video file. Omit to use the live camera.",
+    )
+    p.add_argument(
+        "--output",
+        type=str,
+        default="debug_frame.jpg",
+        help="Path to save the preprocessed frame sent to the cloud (default: debug_frame.jpg).",
+    )
+    return p.parse_args()
+
+
 def open_camera(index: int, width: int, height: int, fps: int) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(index)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
@@ -40,13 +58,25 @@ def open_camera(index: int, width: int, height: int, fps: int) -> cv2.VideoCaptu
     return cap
 
 
+def open_source(args) -> cv2.VideoCapture:
+    if args.input is not None:
+        cap = cv2.VideoCapture(args.input)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open input: {args.input}")
+        logger.info("Input source: %s", args.input)
+        return cap
+    return open_camera(CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT, CAMERA_FPS)
+
+
 def main() -> None:
+    args = parse_args()
+
     print("=" * 50)
     print("  HELMET DETECTION — JETSON NANO")
     print("=" * 50)
 
     # ── INIT ──────────────────────────────────────────────────────────────────
-    cap = open_camera(CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT, CAMERA_FPS)
+    cap = open_source(args)
 
     gate = MotionGate(
         threshold=MOTION_THRESHOLD,
@@ -70,6 +100,8 @@ def main() -> None:
     frames_skipped  = 0
 
     logger.info("Starting capture loop — press Ctrl-C to stop")
+    if args.output:
+        logger.info("Debug frames will be saved to: %s", args.output)
 
     try:
         while True:
@@ -96,10 +128,9 @@ def main() -> None:
             try:
                 jpeg_bytes = preprocessor.process(frame)
 
-                    # ── DEBUG: save what we're about to send ──
-                with open("debug_frame.jpg", "wb") as f:
+                with open(args.output, "wb") as f:
                     f.write(jpeg_bytes)
-                    
+
             except ValueError as exc:
                 logger.error("Preprocessing failed: %s", exc)
                 continue
