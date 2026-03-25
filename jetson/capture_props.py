@@ -24,9 +24,9 @@ def get_capture_props(cap):
     (width, height, fps) -- all ints, with safe fallbacks if the driver
     does not report a value (common with USB webcams on Linux).
     """
-    width  = int(_prop(cap, cv2.CAP_PROP_FRAME_WIDTH,  cv2.cv.CV_CAP_PROP_FRAME_WIDTH))
-    height = int(_prop(cap, cv2.CAP_PROP_FRAME_HEIGHT, cv2.cv.CV_CAP_PROP_FRAME_HEIGHT))
-    fps    = int(_prop(cap, cv2.CAP_PROP_FPS,          cv2.cv.CV_CAP_PROP_FPS))
+    cap.set(3, 1920)  # width
+    cap.set(4, 1080)  # height
+    cap.set(5, 30)    # fps
 
     # USB webcam drivers on Linux often report 0 -- fall back to safe defaults
     if width  == 0: width  = 1920

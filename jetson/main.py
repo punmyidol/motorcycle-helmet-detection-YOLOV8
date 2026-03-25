@@ -29,9 +29,9 @@ def open_camera(source):
         print("[Main] ERROR: Cannot open camera source: %s" % str(source))
         sys.exit(1)
 
-    _set_prop(cap, cv2.CAP_PROP_FRAME_WIDTH,  cv2.cv.CV_CAP_PROP_FRAME_WIDTH,  CAPTURE_WIDTH)
-    _set_prop(cap, cv2.CAP_PROP_FRAME_HEIGHT, cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
-    _set_prop(cap, cv2.CAP_PROP_FPS,          cv2.cv.CV_CAP_PROP_FPS,          CAPTURE_FPS)
+    cap.set(3, 1920)  # width
+    cap.set(4, 1080)  # height
+    cap.set(5, 30)    # fps
 
     actual_w, actual_h, actual_fps = get_capture_props(cap)
     print("[Main] Camera opened: %dx%d @ %d fps" % (actual_w, actual_h, actual_fps))
