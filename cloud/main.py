@@ -6,7 +6,6 @@ from config import (
     ALERT_DEVICE_IP,
     DB_PATH,
     POLYGON,
-    POLYGON_MOTORCYCLE,
 )
 from model import HelmetDetector
 from server import InferenceServer
@@ -24,16 +23,13 @@ def main():
     print("  HELMET DETECTION CLOUD SERVER")
     print("=" * 50)
 
-    # ── LOAD MODEL ────────────────────────────────────────────────────────────
     print("[Main] Loading models...")
     model = HelmetDetector(
         vehicle_model_path = MODEL_PATH["vehicle"],
         helmet_model_path  = MODEL_PATH["helmet"],
         polygon            = POLYGON,
-        polygon_motorcycle = POLYGON_MOTORCYCLE,
     )
 
-    # ── START SERVER ──────────────────────────────────────────────────────────
     print("[Main] Starting inference server...")
     server = InferenceServer(
         model           = model,
@@ -43,7 +39,6 @@ def main():
         db_path         = DB_PATH,
     )
 
-    # ── RUN ───────────────────────────────────────────────────────────────────
     try:
         server.run()
     finally:
